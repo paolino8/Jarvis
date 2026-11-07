@@ -55,6 +55,7 @@
   <input id="pitch" type="range" min="0.5" max="1.5" step="0.1" value="1">
   <small>Velocita'</small>
   <input id="rate" type="range" min="0.6" max="1.4" step="0.1" value="1">
+  <button id="preset">Voce Jarvis</button>
   <button id="test">Prova voce</button>
   <button id="save">Salva</button>
 </div>
@@ -87,18 +88,30 @@ function add(cls, t) { const d = document.createElement('div'); d.className = cl
 
 /* ---------- Voce in uscita ---------- */
 let speaking = false, lastSpoke = 0;
+function itVoices() { return speechSynthesis.getVoices().filter(v => v.lang.replace('_', '-').startsWith('it')); }
+function bestVoice(vs) {
+  const male = vs.filter(v => /luca|cosimo/i.test(v.name));
+  return male.find(v => /premium|enhanced|avanzat|migliorat/i.test(v.name)) || male[0] || vs[0];
+}
 function loadVoices() {
-  const vs = speechSynthesis.getVoices().filter(v => v.lang.replace('_', '-').startsWith('it'));
+  const vs = itVoices();
   const sel = $('voice'); const saved = store('jarvis_voice');
   sel.innerHTML = '';
   vs.forEach(v => { const o = document.createElement('option'); o.value = v.name; o.textContent = v.name; sel.appendChild(o); });
-  if (saved) sel.value = saved;
+  if (saved && vs.some(v => v.name === saved)) sel.value = saved;
+  else if (vs.length) sel.value = bestVoice(vs).name;
 }
 try { speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); } catch (e) {}
-$('pitch').value = store('jarvis_pitch') || 1;
-$('rate').value = store('jarvis_rate') || 1;
+$('pitch').value = store('jarvis_pitch') || 0.85;
+$('rate').value = store('jarvis_rate') || 0.92;
 ['voice', 'pitch', 'rate'].forEach(id => $(id).onchange = () => store('jarvis_' + id, $(id).value));
 $('test').onclick = () => speak('Sono qui, signore. Tutti i sistemi sono operativi.');
+$('preset').onclick = () => {
+  const vs = itVoices(); if (vs.length) $('voice').value = bestVoice(vs).name;
+  $('pitch').value = 0.8; $('rate').value = 0.92;
+  ['voice', 'pitch', 'rate'].forEach(id => store('jarvis_' + id, $(id).value));
+  speak('Buonasera, signore. Sono Jarvis, a sua disposizione.');
+};
 
 function speak(t) {
   try {
