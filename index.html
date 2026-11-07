@@ -69,7 +69,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const SYSTEM = "Sei Jarvis, l'assistente personale di un utente italiano, in stile Iron Man: educato, spiritoso, efficiente. Rispondi sempre in italiano, in modo breve (massimo 3 frasi) perche' le risposte vengono lette ad alta voce. Chiamalo 'signore'. Non usare markdown, asterischi ne' elenchi. Se nel messaggio trovi dati meteo reali tra parentesi quadre, usali per rispondere in modo naturale (temperatura, condizioni, eventuale pioggia, un consiglio utile). Se i dati dicono che la posizione non e' disponibile, di' di consentire la posizione a Safari per questo sito.";
+const SYSTEM = "Sei Jarvis, l'assistente personale di un utente italiano, in stile Iron Man: educato, spiritoso, efficiente. Rispondi sempre in italiano, in modo breve (massimo 3 frasi, fino a 5 per le notizie) perche' le risposte vengono lette ad alta voce. Chiamalo 'signore'. Non usare markdown, asterischi ne' elenchi. Se nel messaggio trovi dati meteo reali tra parentesi quadre, usali per rispondere in modo naturale (temperatura, condizioni, eventuale pioggia, un consiglio utile). Se i dati dicono che la posizione non e' disponibile, di' di consentire la posizione a Safari per questo sito. Se trovi titoli di notizie tra parentesi quadre, riassumi le piu' importanti in modo chiaro e neutrale, senza inventare nulla. Se ti viene chiesto un briefing, saluta, di' l'ora, poi meteo e notizie, in modo molto sintetico.";
 let history = [];
 
 function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} }
@@ -147,21 +147,56 @@ async function getWeather() {
   }
 }
 
+const TIME_RE = /\b(che ore sono|che ora|che giorno|data di oggi|che data)/i;
+const NEWS_RE = /\b(notizie|news|telegiornale|ultime notizie|cosa succede nel mondo|accade nel mondo)/i;
+const BRIEF_RE = /\b(briefing|riepilogo|resoconto)/i;
+
+function timeText() {
+  const d = new Date();
+  return 'Sono le ' + d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) + ' di ' +
+    d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) + '.';
+}
+function greeting() {
+  const h = new Date().getHours();
+  const s = h >= 5 && h < 13 ? 'Buongiorno' : h < 18 ? 'Buon pomeriggio' : 'Buonasera';
+  return s + ', signore. ' + timeText();
+}
+let greeted = false;
+
+async function getNews() {
+  try {
+    const r = await fetch('https://api.rss2json.com/v1/api.json?rss_url=' + encodeURIComponent('https://www.ansa.it/sito/notizie/mondo/mondo_rss.xml'));
+    const j = await r.json();
+    if (!j.items || !j.items.length) throw new Error('vuoto');
+    return JSON.stringify(j.items.slice(0, 10).map(i => i.title));
+  } catch (e) { return null; }
+}
+
 /* ---------- Domanda a Gemini ---------- */
 async function ask(text) {
   text = text.trim(); if (!text) return;
   const key = $('key').value.trim();
   if (!key) { $('cfg').style.display = 'block'; status('Inserisci la chiave API'); return; }
   add('me', text); $('txt').value = '';
+  if (TIME_RE.test(text) && !BRIEF_RE.test(text)) { const o = timeText(); add('ai', o); status('Parlo...'); speak(o); return; }
   $('orb').classList.add('busy'); status('Penso...');
   let content = text;
-  if (METEO_RE.test(text)) { status('Controllo il meteo...'); content += '\n[Dati meteo reali: ' + await getWeather() + ']'; }
+  let useSearch = false;
+  const brief = BRIEF_RE.test(text);
+  if (brief) content += '\n[Ora attuale: ' + timeText() + ']';
+  if (brief || METEO_RE.test(text)) { status('Controllo il meteo...'); content += '\n[Dati meteo reali: ' + await getWeather() + ']'; }
+  if (brief || NEWS_RE.test(text)) {
+    status('Cerco le notizie...');
+    const n = await getNews();
+    if (n) content += '\n[Titoli reali di oggi dal mondo (ANSA): ' + n + ']';
+    else { useSearch = true; content += '\n[Usa la ricerca Google per trovare le notizie piu importanti di oggi dal mondo]'; }
+  }
   history.push({ role: 'user', parts: [{ text: content }] });
   try {
     const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + $('model').value.trim() + ':generateContent?key=' + encodeURIComponent(key);
     const r = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM }] }, contents: history.slice(-20) })
+      body: JSON.stringify(Object.assign({ systemInstruction: { parts: [{ text: SYSTEM }] }, contents: history.slice(-20) }, useSearch ? { tools: [{ google_search: {} }] } : {}))
     });
     const j = await r.json();
     if (!r.ok) throw new Error((j.error && j.error.message) || r.status);
@@ -202,6 +237,7 @@ let earOn = false, ear = null, awakeUntil = 0;
 function startEar() {
   if (!SR) { status('Riconoscimento vocale non supportato'); return; }
   speak(' ');
+  if (!greeted) { greeted = true; setTimeout(() => speak(greeting()), 150); }
   earOn = true; $('ear').classList.add('on'); $('orb').classList.add('listen');
   status('In ascolto: di\u2019 "Jarvis"');
   listenLoop();
@@ -232,6 +268,7 @@ function listenLoop() {
   try { ear.start(); } catch (e) { ear = null; setTimeout(listenLoop, 1000); }
 }
 $('ear').onclick = () => { earOn ? stopEar() : startEar(); };
+add('ai', greeting());
 </script>
 </body>
 </html>
