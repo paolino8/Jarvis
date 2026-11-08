@@ -50,13 +50,7 @@
   <select id="micmode"><option value="auto">Automatico (iOS)</option><option value="gemini">Gemini (registra e trascrive)</option></select>
   <small>Grafica</small>
   <select id="gstyle"><option value="circle">Cerchio</option><option value="hud">HUD da casco</option><option value="neural">Rete neurale</option><option value="combo">HUD e rete</option></select>
-  <small>Motore voce</small>
-  <select id="engine"><option value="browser">iOS (integrata)</option><option value="gemini">Gemini (naturale)</option></select>
-  <small>Voce Gemini</small>
-  <select id="gvoice"><option>Charon</option><option>Orus</option><option>Fenrir</option><option>Algenib</option><option>Iapetus</option><option>Enceladus</option><option>Puck</option></select>
-  <small>Modello voce Gemini</small>
-  <input id="tts" value="gemini-3.1-flash-tts-preview">
-  <small>Voce iOS (riserva)</small>
+  <small>Voce</small>
   <select id="voice"></select>
   <small>Tono (grave - acuto)</small>
   <input id="pitch" type="range" min="0.5" max="1.5" step="0.1" value="1">
@@ -112,18 +106,14 @@ try { speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); } catch (e) {}
 $('pitch').value = store('jarvis_pitch') || 0.85;
 $('rate').value = store('jarvis_rate') || 0.92;
 ['voice', 'pitch', 'rate'].forEach(id => $(id).onchange = () => store('jarvis_' + id, $(id).value));
-$('test').onclick = () => { unlockAudio(); speak('Sono qui, signore. Tutti i sistemi sono operativi.', true); };
+$('test').onclick = () => { unlockAudio(); speak('Sono qui, signore. Tutti i sistemi sono operativi.'); };
 $('preset').onclick = () => {
   unlockAudio();
   const vs = itVoices(); if (vs.length) $('voice').value = bestVoice(vs).name;
   $('pitch').value = 0.8; $('rate').value = 0.92;
   ['voice', 'pitch', 'rate'].forEach(id => store('jarvis_' + id, $(id).value));
-  speak('Buonasera, signore. Sono Jarvis, a sua disposizione.', true);
+  speak('Buonasera, signore. Sono Jarvis, a sua disposizione.');
 };
-$('engine').value = store('jarvis_engine') || 'browser';
-$('gvoice').value = store('jarvis_gvoice') || 'Charon';
-{ let tv = store('jarvis_tts'); if (!tv || tv === 'gemini-2.5-flash-preview-tts') tv = 'gemini-3.1-flash-tts-preview'; $('tts').value = tv; }
-['engine', 'gvoice', 'tts'].forEach(id => $(id).onchange = () => store('jarvis_' + id, $(id).value.trim()));
 
 function browserSpeak(t) {
   try {
@@ -142,7 +132,7 @@ function browserSpeak(t) {
   } catch (e) { speaking = false; }
 }
 
-let audioCtx = null, currentSrc = null;
+let audioCtx = null;
 function unlockAudio() {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -153,76 +143,9 @@ function unlockAudio() {
 }
 document.addEventListener('touchstart', unlockAudio, { once: true });
 document.addEventListener('click', unlockAudio, { once: true });
-function speakDone() {
-  speaking = false; lastSpoke = Date.now(); $('orb').classList.remove('busy');
-  status(earOn ? 'In ascolto: di\u2019 "Jarvis"' : 'Pronto');
-}
-function findAudio(o) {
-  if (!o || typeof o !== 'object') return null;
-  if (typeof o.data === 'string' && o.data.length > 2000) return { data: o.data, mime: o.mimeType || o.mime_type || '' };
-  for (const k in o) { const r = findAudio(o[k]); if (r) return r; }
-  return null;
-}
-async function ttsRequest(t, key) {
-  const voice = $('gvoice').value, model = $('tts').value.trim();
-  const prompt = 'Leggi in italiano con voce maschile calma, elegante e sicura, come un maggiordomo britannico: ' + t;
-  const base = 'https://generativelanguage.googleapis.com/v1beta/';
-  const gc = m => () => fetch(base + 'models/' + m + ':generateContent?key=' + encodeURIComponent(key), {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } } })
-  });
-  const ia = rev => () => fetch(base + 'interactions?key=' + encodeURIComponent(key), {
-    method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, rev ? { 'Api-Revision': '2026-05-20' } : {}),
-    body: JSON.stringify({ model: model, input: prompt, response_format: { type: 'audio' }, generation_config: { speech_config: [{ voice: voice }] } })
-  });
-  const attempts = [['A', gc(model)], ['B', ia(true)], ['C', ia(false)], ['D', gc('gemini-2.5-flash-preview-tts')]];
-  const errs = [];
-  for (const at of attempts) {
-    try {
-      const r = await at[1]();
-      const j = await r.json();
-      if (!r.ok) throw new Error((j.error && j.error.message) || r.status);
-      const au = findAudio(j);
-      if (au) return au;
-      throw new Error('nessun audio ricevuto');
-    } catch (e) { errs.push(at[0] + ': ' + String(e.message).slice(0, 90)); }
-  }
-  throw new Error(errs.join(' | '));
-}
-async function geminiSpeak(t) {
-  const key = $('key').value.trim();
-  if (!key) throw new Error('manca la chiave');
-  if (!audioCtx) unlockAudio();
-  if (!audioCtx) throw new Error('audio non sbloccato: tocca un pulsante e riprova');
-  try { if (currentSrc) currentSrc.stop(); } catch (e) {}
-  speaking = true; status('Preparo la voce...');
-  const au = await ttsRequest(t, key);
-  const rate = parseInt((au.mime.match(/rate=(\d+)/) || [])[1]) || 24000;
-  const bin = atob(au.data);
-  const off = bin.slice(0, 4) === 'RIFF' ? 44 : 0;
-  const n = Math.floor((bin.length - off) / 2);
-  const buf = audioCtx.createBuffer(1, n, rate), ch = buf.getChannelData(0);
-  for (let i = 0; i < n; i++) {
-    let v = (bin.charCodeAt(off + 2 * i + 1) << 8) | bin.charCodeAt(off + 2 * i);
-    if (v >= 32768) v -= 65536;
-    ch[i] = v / 32768;
-  }
-  if (audioCtx.state === 'suspended') await audioCtx.resume();
-  const src = audioCtx.createBufferSource();
-  src.buffer = buf; src.connect(audioCtx.destination);
-  src.onended = speakDone; currentSrc = src;
-  status('Parlo...'); src.start();
-}
-function speak(t, verbose) {
+function speak(t) {
   if (!t.trim()) { unlockAudio(); browserSpeak(' '); return; }
-  if ($('engine').value === 'gemini') {
-    geminiSpeak(t).catch(e => {
-      speaking = false;
-      if (verbose) add('ai', 'Voce Gemini non disponibile (' + e.message + '). Uso la voce di iOS.');
-      browserSpeak(t);
-    });
-  } else browserSpeak(t);
+  browserSpeak(t);
 }
 
 /* ---------- Meteo (Open-Meteo, gratis, senza chiave) ---------- */
@@ -420,27 +343,31 @@ async function gemMicToggle() {
     const ctx = audioCtx;
     if (ctx.state === 'suspended') await ctx.resume();
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const src = ctx.createMediaStreamSource(stream);
-    const proc = ctx.createScriptProcessor(4096, 1, 1);
-    const mute = ctx.createGain(); mute.gain.value = 0;
-    const chunks = []; let tm = null;
-    proc.onaudioprocess = e => { chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
-    src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
-    gRec = { stop: async () => {
-      clearTimeout(tm); gRec = null;
-      try { proc.disconnect(); src.disconnect(); } catch (e) {}
+    if (!window.MediaRecorder) throw new Error('registrazione non supportata');
+    const mr = new MediaRecorder(stream);
+    const chunks = []; let tm = null, tick = null; const t0 = Date.now();
+    mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = async () => {
+      clearTimeout(tm); clearInterval(tick); gRec = null;
       stream.getTracks().forEach(t => t.stop());
       $('mic').classList.remove('on');
-      const blob = encodeWav(chunks, ctx.sampleRate);
-      if (blob.size < 6000) { status('Non ho sentito nulla'); return; }
+      const secs = (Date.now() - t0) / 1000;
+      const raw = new Blob(chunks, { type: mr.mimeType || 'audio/mp4' });
+      if (secs < 0.8 || raw.size < 800) { status('Registrazione troppo breve (' + secs.toFixed(1) + ' s): parla, poi tocca di nuovo'); return; }
       status('Trascrivo...');
       try {
-        const txt = await transcribe(blob);
+        const ab = await raw.arrayBuffer();
+        const dec = await new Promise((res, rej) => ctx.decodeAudioData(ab, res, e => rej(new Error('audio non decodificabile'))));
+        const wav = encodeWav([dec.getChannelData(0)], dec.sampleRate);
+        const txt = await transcribe(wav);
         if (txt) ask(txt); else status('Non ho capito, riprova');
-      } catch (e) { add('ai', 'Errore microfono: ' + e.message); status('Errore'); }
-    } };
+      } catch (e) { add('ai', 'Errore microfono: ' + (e.message || e)); status('Errore'); }
+    };
+    gRec = { stop: () => { try { mr.stop(); } catch (e) {} } };
+    mr.start();
     tm = setTimeout(() => { if (gRec) gRec.stop(); }, 15000);
-    $('mic').classList.add('on'); status('Parla, poi tocca di nuovo il microfono');
+    tick = setInterval(() => status('Registro ' + Math.round((Date.now() - t0) / 1000) + ' s: tocca il microfono per inviare'), 500);
+    $('mic').classList.add('on');
   } catch (e) { gRec = null; $('mic').classList.remove('on'); status('Microfono: ' + (e.name || e.message)); }
 }
 $('micmode').value = store('jarvis_micmode') || 'auto';
