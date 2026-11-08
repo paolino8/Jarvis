@@ -44,6 +44,8 @@
   <input id="key" type="password" placeholder="Incolla qui la chiave">
   <small>Modello</small>
   <input id="model" value="gemini-2.5-flash-lite">
+  <small>Nome del comando batteria (app Comandi rapidi)</small>
+  <input id="shname" value="Jarvis batteria">
   <small>Grafica</small>
   <select id="gstyle"><option value="circle">Cerchio</option><option value="hud">HUD da casco</option><option value="neural">Rete neurale</option><option value="combo">HUD e rete</option></select>
   <small>Motore voce</small>
@@ -445,6 +447,16 @@ add('ai', greeting());
   }
   $('gstyle').onchange = () => { style = $('gstyle').value; store('jarvis_style', style); maybeWeather(); };
   document.addEventListener('click', maybeWeather);
+  $('shname').value = store('jarvis_shname') || 'Jarvis batteria';
+  $('shname').onchange = () => store('jarvis_shname', $('shname').value.trim());
+  cv.addEventListener('click', e => {
+    if (style !== 'combo') return;
+    const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+    if (px >= W - 100 && px <= W - 8 && py >= 8 && py <= 64) {
+      store('jarvis_shname', $('shname').value.trim());
+      location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(($('shname').value || 'Jarvis batteria').trim());
+    }
+  });
 
   function drawHud(s) {
     const t = s.t, energy = s.energy, col = s.col, col2 = s.col2;
@@ -595,17 +607,18 @@ add('ai', greeting());
 
     const w = hudW;
     const bv = bat.pct === null ? 'n/d' : bat.pct + '%';
-    const bs = bat.pct === null ? 'non su iOS' : bat.at ? 'alle ' + new Date(bat.at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : (bat.chg ? 'in carica' : 'batteria');
+    const low = bat.pct !== null && bat.pct < 30;
+    const bs = bat.pct === null ? 'tocca qui' : bat.at ? 'alle ' + new Date(bat.at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : (bat.chg ? 'in carica' : 'batteria');
     const panels = [
       [8, 8, 'Meteo', w ? w.t + ' °C' : '--', w ? String(w.c).slice(0, 11) : 'tocca 👂'],
-      [W - 100, 8, 'Batteria', bv, bs]
+      [W - 100, 8, 'Batteria', bv, bs, low ? 'hsla(48,100%,55%,1)' : null]
     ];
     g.lineWidth = 1;
     panels.forEach(p => {
-      g.strokeStyle = col(60, 0.7); g.strokeRect(p[0] + 0.5, p[1] + 0.5, 92, 56);
-      g.fillStyle = col(65, 0.8); g.font = '11px ui-monospace, Menlo, monospace'; g.fillText(p[2], p[0] + 8, p[1] + 16);
-      g.fillStyle = col2(65, 1); g.font = '17px ui-monospace, Menlo, monospace'; g.fillText(p[3], p[0] + 8, p[1] + 36);
-      g.fillStyle = col(65, 0.7); g.font = '11px ui-monospace, Menlo, monospace'; g.fillText(p[4], p[0] + 8, p[1] + 50);
+      g.strokeStyle = p[5] || col(60, 0.7); g.strokeRect(p[0] + 0.5, p[1] + 0.5, 92, 56);
+      g.fillStyle = p[5] || col(65, 0.8); g.font = '11px ui-monospace, Menlo, monospace'; g.fillText(p[2], p[0] + 8, p[1] + 16);
+      g.fillStyle = p[5] || col2(65, 1); g.font = '17px ui-monospace, Menlo, monospace'; g.fillText(p[3], p[0] + 8, p[1] + 36);
+      g.fillStyle = p[5] || col(65, 0.7); g.font = '11px ui-monospace, Menlo, monospace'; g.fillText(p[4], p[0] + 8, p[1] + 50);
     });
     const d = new Date();
     const hh = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
