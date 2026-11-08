@@ -48,6 +48,10 @@
   <input id="shname" value="Jarvis batteria">
   <small>Microfono</small>
   <select id="micmode"><option value="auto">Automatico (iOS)</option><option value="gemini">Gemini (registra e trascrive)</option></select>
+  <small>Microfono all'apertura (per "Ehi Siri, Jarvis")</small>
+  <select id="automic"><option value="off">Spento</option><option value="on">Acceso</option></select>
+  <small>Suono all'apertura</small>
+  <select id="startsnd"><option value="singolarita">Singolarità</option><option value="plasma">Plasma</option><option value="off">Spento</option></select>
   <small>Grafica</small>
   <select id="gstyle"><option value="circle">Cerchio</option><option value="hud">HUD da casco</option><option value="neural">Rete neurale</option><option value="combo">HUD e rete</option></select>
   <small>Voce</small>
@@ -336,12 +340,12 @@ async function transcribe(blob) {
   if (!r.ok) throw new Error((j.error && j.error.message) || r.status);
   return j.candidates[0].content.parts.map(p => p.text || '').join('').trim();
 }
-async function gemMicToggle() {
+async function gemMicToggle(auto) {
   if (gRec) { gRec.stop(); return; }
   try {
     if (!audioCtx) unlockAudio();
     const ctx = audioCtx;
-    if (ctx.state === 'suspended') await ctx.resume();
+    try { if (ctx.state === 'suspended') ctx.resume(); } catch (e) {}
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     if (!window.MediaRecorder) throw new Error('registrazione non supportata');
     const mr = new MediaRecorder(stream);
@@ -365,8 +369,9 @@ async function gemMicToggle() {
     };
     gRec = { stop: () => { try { mr.stop(); } catch (e) {} } };
     mr.start();
-    tm = setTimeout(() => { if (gRec) gRec.stop(); }, 15000);
-    tick = setInterval(() => status('Registro ' + Math.round((Date.now() - t0) / 1000) + ' s: tocca il microfono per inviare'), 500);
+    tm = setTimeout(() => { if (gRec) gRec.stop(); }, auto ? 8000 : 15000);
+    status(auto ? 'Parla ora...' : 'Registro...');
+    tick = setInterval(() => status((auto ? 'Parla ora: ' : 'Registro ') + Math.round((Date.now() - t0) / 1000) + ' s, tocca il microfono per inviare'), 500);
     $('mic').classList.add('on');
   } catch (e) { gRec = null; $('mic').classList.remove('on'); status('Microfono: ' + (e.name || e.message)); }
 }
@@ -428,6 +433,69 @@ function listenLoop() {
 }
 $('ear').onclick = () => { earOn ? stopEar() : startEar(); };
 add('ai', greeting());
+let sndSel = store('jarvis_startsnd') || 'singolarita';
+if (sndSel === 'on') sndSel = 'singolarita';
+$('startsnd').value = sndSel;
+let soundDone = false;
+$('startsnd').onchange = () => {
+  store('jarvis_startsnd', $('startsnd').value); soundDone = false;
+  if ($('startsnd').value !== 'off') { unlockAudio(); setTimeout(() => { if (startupSound()) soundDone = true; }, 200); }
+};
+function snTone(c, type, f0, f1, t0, dur, vol, att) {
+  const o = c.createOscillator(), g = c.createGain(), t = c.currentTime + 0.02 + t0;
+  o.type = type;
+  o.frequency.setValueAtTime(f0, t);
+  if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + (att || 0.02));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(c.destination);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function snWob(c, f, t0, dur, vol, rate, depth) {
+  const o = c.createOscillator(), g = c.createGain(), l = c.createOscillator(), lg = c.createGain(), t = c.currentTime + 0.02 + t0;
+  o.type = 'sine'; o.frequency.value = f;
+  l.frequency.value = rate; lg.gain.value = depth;
+  l.connect(lg); lg.connect(o.frequency);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.3);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(c.destination);
+  o.start(t); l.start(t); o.stop(t + dur + 0.05); l.stop(t + dur + 0.05);
+}
+function startupSound() {
+  try {
+    if (!audioCtx) unlockAudio();
+    const c = audioCtx;
+    if (!c || c.state !== 'running') return false;
+    const k = $('startsnd').value;
+    if (k === 'plasma') {
+      snWob(c, 110, 0, 1.4, 0.3, 14, 25);
+      snWob(c, 220, 0, 1.4, 0.2, 18, 40);
+      snTone(c, 'sawtooth', 200, 1600, 0.2, 1.0, 0.07, 0.5);
+      snTone(c, 'sine', 2400, 2400, 1.0, 0.5, 0.1);
+    } else {
+      snTone(c, 'sine', 40, 160, 0, 1.1, 0.5, 0.3);
+      snTone(c, 'triangle', 80, 640, 0.1, 1.0, 0.15, 0.4);
+      snTone(c, 'sine', 2000, 5000, 1.0, 0.35, 0.12, 0.01);
+      snTone(c, 'sine', 3000, 3000, 1.1, 0.8, 0.08, 0.01);
+    }
+    return true;
+  } catch (e) { return false; }
+}
+function trySound() {
+  if (soundDone || $('startsnd').value === 'off') return;
+  if (startupSound()) soundDone = true;
+}
+setTimeout(trySound, 400);
+['touchstart', 'click'].forEach(ev => document.addEventListener(ev, () => { setTimeout(trySound, 150); setTimeout(trySound, 600); }));
+$('automic').value = store('jarvis_automic') || 'off';
+$('automic').onchange = () => store('jarvis_automic', $('automic').value);
+setTimeout(() => {
+  let hasBat = false;
+  try { hasBat = new URLSearchParams(location.search).has('bat'); } catch (e) {}
+  if ($('automic').value === 'on' && !hasBat) gemMicToggle(true);
+}, 1500);
 
 /* ---------- Grafica animata di Jarvis ---------- */
 (function () {
