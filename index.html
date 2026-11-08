@@ -29,6 +29,7 @@
   #cfg { display: none; padding: 10px; border: 1px solid var(--dim); border-radius: 12px; margin-bottom: 8px; }
   #cfg input { width: 100%; margin: 4px 0 8px; }
   small { opacity: .6; }
+  a.lnk { display: inline-block; margin: 4px 0; padding: 10px 14px; border: 1px solid var(--c); border-radius: 10px; color: var(--c); text-decoration: none; background: #041a24; }
   select { width: 100%; margin: 4px 0 8px; font-size: 17px; border-radius: 10px; border: 1px solid var(--c); background: #041a24; color: var(--c); padding: 12px; }
   input[type=range] { padding: 0; }
 </style>
@@ -72,7 +73,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const SYSTEM = "Sei Jarvis, l'assistente personale di un utente italiano, in stile Iron Man: educato, spiritoso, efficiente. Rispondi sempre in italiano, in modo breve (massimo 3 frasi, fino a 5 per le notizie) perche' le risposte vengono lette ad alta voce. Chiamalo 'signore'. Non usare markdown, asterischi ne' elenchi. Se nel messaggio trovi dati meteo reali tra parentesi quadre, usali per rispondere in modo naturale (temperatura, condizioni, eventuale pioggia, un consiglio utile). Se i dati dicono che la posizione non e' disponibile, di' di consentire la posizione a Safari per questo sito. Se trovi titoli di notizie tra parentesi quadre, riassumi le piu' importanti in modo chiaro e neutrale, senza inventare nulla. Se ti viene chiesto un briefing, saluta, di' l'ora, poi meteo e notizie, in modo molto sintetico.";
+const SYSTEM = "Sei Jarvis, l'assistente personale di un utente italiano, in stile Iron Man: educato, spiritoso, efficiente. Rispondi sempre in italiano, in modo breve (massimo 3 frasi, fino a 5 per le notizie) perche' le risposte vengono lette ad alta voce. Chiamalo 'signore'. Non usare markdown, asterischi ne' elenchi. Se nel messaggio trovi dati meteo reali tra parentesi quadre, usali per rispondere in modo naturale (temperatura, condizioni, eventuale pioggia, un consiglio utile). Se i dati dicono che la posizione non e' disponibile, di' di consentire la posizione a Safari per questo sito. Se trovi titoli di notizie tra parentesi quadre, riassumi le piu' importanti in modo chiaro e neutrale, senza inventare nulla. Se trovi un estratto di Wikipedia tra parentesi quadre, usalo per rispondere in al massimo 4 frasi; se non e' pertinente, ignoralo e rispondi con le tue conoscenze. Se ti viene chiesto un briefing, saluta, di' l'ora, poi meteo e notizie, in modo molto sintetico.";
 let history = [];
 
 function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} }
@@ -247,6 +248,36 @@ async function getNews() {
   } catch (e) { return null; }
 }
 
+const YT_RE = /youtube/i;
+const YT_CMD = /(apri|aprimi|avvia|metti|mettimi|cerca|cercami|riproduci|guarda|fammi vedere|vai)/i;
+const WIKI_RE = /(wikipedia|\bchi (è|era)|\bche cos.è|\bcos.è|\bcos.era|\bparlami di|\bdimmi qualcosa su)/i;
+
+function addLink(label, url) {
+  const d = document.createElement('div'); d.className = 'ai';
+  const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.className = 'lnk'; a.textContent = label;
+  d.appendChild(a); $('log').appendChild(d); $('log').scrollTop = 1e9;
+}
+function ytQuery(text) {
+  return text.replace(/\b(jarvis|per favore|per piacere)\b/ig, ' ')
+    .replace(/\b(su|in|nel|sul|con)?\s*youtube\b/ig, ' ')
+    .replace(/\b(apri|aprimi|avvia|metti|mettimi|cerca|cercami|riproduci|guarda|fammi vedere|vai)\b/ig, ' ')
+    .replace(/[?!.,]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function wikiQuery(text) {
+  return text.replace(/\b(jarvis|per favore|per piacere)\b/ig, ' ')
+    .replace(/(cerca su wikipedia|su wikipedia|wikipedia|che cosa è|che cos.è|cosa è|cos.è|cos.era|chi è|chi era|chi e'|parlami di|dimmi qualcosa su|dimmi di|cerca|cercami|apri|aprimi|avvia|vai su|vai)/ig, ' ')
+    .replace(/[?!.,]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+async function getWiki(q) {
+  try {
+    const u = 'https://it.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=' + encodeURIComponent(q) +
+      '&gsrlimit=1&prop=extracts|info&exintro=1&explaintext=1&exchars=1500&inprop=url&format=json&origin=*';
+    const j = await (await fetch(u)).json();
+    const p = Object.values(j.query.pages)[0];
+    return { titolo: p.title, testo: p.extract, url: p.fullurl };
+  } catch (e) { return null; }
+}
+
 /* ---------- Domanda a Gemini ---------- */
 async function ask(text) {
   text = text.trim(); if (!text) return;
@@ -254,9 +285,31 @@ async function ask(text) {
   if (!key) { $('cfg').style.display = 'block'; status('Inserisci la chiave API'); return; }
   add('me', text); $('txt').value = '';
   if (TIME_RE.test(text) && !BRIEF_RE.test(text)) { const o = timeText(); add('ai', o); status('Parlo...'); speak(o); return; }
+  if (YT_RE.test(text) && YT_CMD.test(text)) {
+    const q = ytQuery(text);
+    const url = q ? 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q) : 'https://www.youtube.com/';
+    const o = q ? 'Cerco ' + q + ' su YouTube, signore.' : 'Apro YouTube, signore.';
+    add('ai', o); addLink(q ? 'Apri la ricerca su YouTube' : 'Apri YouTube', url); status('Parlo...'); speak(o);
+    setTimeout(() => { try { window.open(url, '_blank'); } catch (e) {} }, 2500);
+    return;
+  }
+  if (/wikipedia/i.test(text) && !wikiQuery(text)) {
+    const o = 'Apro Wikipedia, signore.';
+    add('ai', o); addLink('Apri Wikipedia', 'https://it.wikipedia.org/'); status('Parlo...'); speak(o);
+    return;
+  }
   $('orb').classList.add('busy'); status('Penso...');
   let content = text;
+  let wikiUrl = null;
   let useSearch = false;
+  if (WIKI_RE.test(text)) {
+    const q = wikiQuery(text);
+    if (q) {
+      status('Cerco su Wikipedia...');
+      const w = await getWiki(q);
+      if (w && w.testo) { content += '\n[Wikipedia: ' + JSON.stringify({ titolo: w.titolo, testo: w.testo }) + ']'; wikiUrl = w.url; }
+    }
+  }
   const brief = BRIEF_RE.test(text);
   if (brief) content += '\n[Ora attuale: ' + timeText() + ']';
   if (brief || METEO_RE.test(text)) { status('Controllo il meteo...'); content += '\n[Dati meteo reali: ' + await getWeather() + ']'; }
@@ -278,6 +331,7 @@ async function ask(text) {
     const out = j.candidates[0].content.parts.map(p => p.text || '').join('').trim();
     history.push({ role: 'model', parts: [{ text: out }] });
     add('ai', out); status('Parlo...'); speak(out);
+    if (wikiUrl) addLink('Leggi su Wikipedia', wikiUrl);
   } catch (e) {
     history.pop(); $('orb').classList.remove('busy');
     add('ai', 'Errore: ' + e.message); status('Errore');
