@@ -419,10 +419,20 @@ add('ai', greeting());
   const TAU = Math.PI * 2;
   let style = store('jarvis_style') || 'circle';
   $('gstyle').value = style;
-  const bat = { pct: null, chg: false };
+  const bat = { pct: null, chg: false, at: null };
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.has('bat')) {
+      let v = parseFloat(q.get('bat'));
+      if (v > 0 && v <= 1) v *= 100;
+      if (v >= 0 && v <= 100) store('jarvis_bat', JSON.stringify({ p: Math.round(v), c: q.get('chg') === '1', t: Date.now() }));
+    }
+    const sv = JSON.parse(store('jarvis_bat') || 'null');
+    if (sv) { bat.pct = sv.p; bat.chg = sv.c; bat.at = sv.t; }
+  } catch (e) {}
   try {
     if (navigator.getBattery) navigator.getBattery().then(b => {
-      const u = () => { bat.pct = Math.round(b.level * 100); bat.chg = b.charging; };
+      const u = () => { bat.pct = Math.round(b.level * 100); bat.chg = b.charging; bat.at = null; };
       u(); b.addEventListener('levelchange', u); b.addEventListener('chargingchange', u);
     });
   } catch (e) {}
@@ -538,10 +548,7 @@ add('ai', greeting());
 
   function drawCombo(s) {
     const t = s.t, energy = s.energy, col = s.col, col2 = s.col2, talk = s.talk, busy = s.busy;
-    const cx = W / 2, top = 78, bot = H - 34, cy = (top + bot) / 2 + 2, R = 36;
-    const gl = g.createRadialGradient(cx, cy, 0, cx, cy, R * 2.2);
-    gl.addColorStop(0, col(60, 0.16 + energy * 0.25)); gl.addColorStop(1, col(60, 0));
-    g.fillStyle = gl; g.fillRect(0, 0, W, H);
+    const cx = W / 2, top = 78, bot = H - 34, cy = (top + bot) / 2 + 2, R = 34;
     g.setLineDash([]); g.lineCap = 'butt'; g.strokeStyle = col(60, 0.8); g.lineWidth = 2;
     const b = 14, m = 3;
     [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]].forEach(c => {
@@ -554,7 +561,7 @@ add('ai', greeting());
       nodes[l] = [];
       for (let i = 0; i < cnt[l]; i++) nodes[l].push([xs[l] + Math.sin(t * 0.6 + l * 2 + i) * 3, ny(i, cnt[l]) + Math.cos(t * 0.5 + i * 1.7 + l) * 3]);
     }
-    const lp = [cx - R * 1.2, cy], rp = [cx + R * 1.2, cy];
+    const lp = [cx - R * 1.75, cy], rp = [cx + R * 1.75, cy];
     const speed = talk ? 0.9 : busy ? 0.6 : 0.25;
     const f = ((t * speed) % 1.5) - 0.25;
     const brX = (x, i, l) => {
@@ -573,19 +580,7 @@ add('ai', greeting());
     for (let c = 0; c < 5; c++) line(rp[0], rp[1], nodes[2][c][0], nodes[2][c][1], (brX(rp[0], 0, 2) + brX(nodes[2][c][0], c, 2)) / 2);
     for (let a = 0; a < 5; a++) for (let c = 0; c < 3; c++) line(nodes[2][a][0], nodes[2][a][1], nodes[3][c][0], nodes[3][c][1], (brX(nodes[2][a][0], a, 2) + brX(nodes[3][c][0], c, 3)) / 2);
 
-    g.beginPath(); g.arc(cx, cy, R * 1.2, 0, TAU);
-    g.setLineDash([7, 5]); g.lineDashOffset = -t * (15 + energy * 60);
-    g.strokeStyle = col(60, 0.85); g.lineWidth = 1.5; g.stroke(); g.setLineDash([]);
-    for (let k = 0; k < 2; k++) {
-      const a0 = t * (0.7 + energy * 2) + k * Math.PI;
-      g.beginPath(); g.arc(cx, cy, R, a0, a0 + 1.5); g.strokeStyle = col(65, 0.95); g.lineWidth = 3.5; g.lineCap = 'round'; g.stroke();
-      const a1 = -t * (1.1 + energy * 2.5) + k * Math.PI;
-      g.beginPath(); g.arc(cx, cy, R * 0.62, a1, a1 + 1.1); g.strokeStyle = col2(70, 0.95); g.lineWidth = 2.5; g.stroke();
-    }
-    const cr = R * 0.22 * (1 + 0.08 * Math.sin(t * 3) + energy * 0.2 * Math.sin(t * 9));
-    const core = g.createRadialGradient(cx, cy, 0, cx, cy, cr * 1.9);
-    core.addColorStop(0, 'rgba(255,255,255,0.95)'); core.addColorStop(0.4, col2(62, 0.9)); core.addColorStop(1, col(50, 0));
-    g.beginPath(); g.arc(cx, cy, cr * 1.9, 0, TAU); g.fillStyle = core; g.fill();
+    drawOrb(cx + Math.sin(t * 0.7) * 4, cy + Math.cos(t * 0.5) * 3, R, s);
 
     for (let l = 0; l < 4; l++) for (let i = 0; i < cnt[l]; i++) {
       const x = nodes[l][i][0], y = nodes[l][i][1], v = brX(x, i, l);
@@ -600,7 +595,7 @@ add('ai', greeting());
 
     const w = hudW;
     const bv = bat.pct === null ? 'n/d' : bat.pct + '%';
-    const bs = bat.pct === null ? 'non su iOS' : (bat.chg ? 'in carica' : 'batteria');
+    const bs = bat.pct === null ? 'non su iOS' : bat.at ? 'alle ' + new Date(bat.at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : (bat.chg ? 'in carica' : 'batteria');
     const panels = [
       [8, 8, 'Meteo', w ? w.t + ' °C' : '--', w ? String(w.c).slice(0, 11) : 'tocca 👂'],
       [W - 100, 8, 'Batteria', bv, bs]
@@ -629,29 +624,8 @@ add('ai', greeting());
     g.strokeStyle = col2(65, 0.9); g.lineWidth = 1.5; g.stroke();
   }
 
-  function frame() {
-    requestAnimationFrame(frame);
-    if (document.hidden || !W) return;
-    t += reduce ? 0.004 : 0.016;
-    const busy = cv.classList.contains('busy'), listen = cv.classList.contains('listen');
-    const talk = typeof speaking !== 'undefined' && speaking;
-    const target = talk ? 1 : busy ? 0.7 : listen ? 0.4 : 0.15;
-    energy += (target - energy) * 0.05;
-    const th = talk ? 364 : busy ? 38 : 190;
-    hue += (th - hue) * 0.08;
-    ah += ((talk ? 406 : th) - ah) * 0.08;
-    tk += ((talk ? 1 : 0) - tk) * 0.08;
-    const col = (l, a) => 'hsla(' + hue.toFixed(0) + ',100%,' + (l * (1 - 0.3 * tk)).toFixed(0) + '%,' + a + ')';
-    const col2 = (l, a) => 'hsla(' + ah.toFixed(0) + ',100%,' + (l * (1 - 0.12 * tk)).toFixed(0) + '%,' + a + ')';
-    const R = Math.min(W, H) * 0.3;
-    const x = W / 2 + Math.sin(t * 0.7) * W * 0.12 + Math.sin(t * 1.9 + 1) * W * 0.03;
-    const y = H / 2 + Math.cos(t * 0.5) * H * 0.07 + Math.sin(t * 1.3) * H * 0.03;
-    g.clearRect(0, 0, W, H);
-    if (style !== 'circle') {
-      (style === 'hud' ? drawHud : style === 'combo' ? drawCombo : drawNeural)({ t: t, energy: energy, talk: talk, busy: busy, listen: listen, col: col, col2: col2 });
-      return;
-    }
-
+  function drawOrb(x, y, R, s) {
+    const t = s.t, energy = s.energy, talk = s.talk, busy = s.busy, listen = s.listen, col = s.col, col2 = s.col2;
     const glow = g.createRadialGradient(x, y, 0, x, y, R * 2);
     glow.addColorStop(0, col(60, 0.22 + energy * 0.3)); glow.addColorStop(1, col(60, 0));
     g.fillStyle = glow; g.fillRect(0, 0, W, H);
@@ -713,6 +687,32 @@ add('ai', greeting());
     const core = g.createRadialGradient(x, y, 0, x, y, cr * 1.6);
     core.addColorStop(0, 'rgba(255,255,255,0.95)'); core.addColorStop(0.4, col2(62, 0.9)); core.addColorStop(1, col(50, 0));
     g.beginPath(); g.arc(x, y, cr * 1.6, 0, TAU); g.fillStyle = core; g.fill();
+  }
+
+  function frame() {
+    requestAnimationFrame(frame);
+    if (document.hidden || !W) return;
+    t += reduce ? 0.004 : 0.016;
+    const busy = cv.classList.contains('busy'), listen = cv.classList.contains('listen');
+    const talk = typeof speaking !== 'undefined' && speaking;
+    const target = talk ? 1 : busy ? 0.7 : listen ? 0.4 : 0.15;
+    energy += (target - energy) * 0.05;
+    const th = talk ? 364 : busy ? 38 : 190;
+    hue += (th - hue) * 0.08;
+    ah += ((talk ? 406 : th) - ah) * 0.08;
+    tk += ((talk ? 1 : 0) - tk) * 0.08;
+    const col = (l, a) => 'hsla(' + hue.toFixed(0) + ',100%,' + (l * (1 - 0.3 * tk)).toFixed(0) + '%,' + a + ')';
+    const col2 = (l, a) => 'hsla(' + ah.toFixed(0) + ',100%,' + (l * (1 - 0.12 * tk)).toFixed(0) + '%,' + a + ')';
+    const R = Math.min(W, H) * 0.3;
+    const x = W / 2 + Math.sin(t * 0.7) * W * 0.12 + Math.sin(t * 1.9 + 1) * W * 0.03;
+    const y = H / 2 + Math.cos(t * 0.5) * H * 0.07 + Math.sin(t * 1.3) * H * 0.03;
+    g.clearRect(0, 0, W, H);
+    if (style !== 'circle') {
+      (style === 'hud' ? drawHud : style === 'combo' ? drawCombo : drawNeural)({ t: t, energy: energy, talk: talk, busy: busy, listen: listen, col: col, col2: col2 });
+      return;
+    }
+
+    drawOrb(x, y, R, { t: t, energy: energy, talk: talk, busy: busy, listen: listen, col: col, col2: col2 });
   }
   frame();
 })();
