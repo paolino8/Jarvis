@@ -110,8 +110,9 @@ try { speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); } catch (e) {}
 $('pitch').value = store('jarvis_pitch') || 0.85;
 $('rate').value = store('jarvis_rate') || 0.92;
 ['voice', 'pitch', 'rate'].forEach(id => $(id).onchange = () => store('jarvis_' + id, $(id).value));
-$('test').onclick = () => speak('Sono qui, signore. Tutti i sistemi sono operativi.', true);
+$('test').onclick = () => { unlockAudio(); speak('Sono qui, signore. Tutti i sistemi sono operativi.', true); };
 $('preset').onclick = () => {
+  unlockAudio();
   const vs = itVoices(); if (vs.length) $('voice').value = bestVoice(vs).name;
   $('pitch').value = 0.8; $('rate').value = 0.92;
   ['voice', 'pitch', 'rate'].forEach(id => store('jarvis_' + id, $(id).value));
@@ -148,6 +149,8 @@ function unlockAudio() {
     src.buffer = b; src.connect(audioCtx.destination); src.start(0);
   } catch (e) {}
 }
+document.addEventListener('touchstart', unlockAudio, { once: true });
+document.addEventListener('click', unlockAudio, { once: true });
 function speakDone() {
   speaking = false; lastSpoke = Date.now(); $('orb').classList.remove('busy');
   status(earOn ? 'In ascolto: di\u2019 "Jarvis"' : 'Pronto');
@@ -188,6 +191,7 @@ async function ttsRequest(t, key) {
 async function geminiSpeak(t) {
   const key = $('key').value.trim();
   if (!key) throw new Error('manca la chiave');
+  if (!audioCtx) unlockAudio();
   if (!audioCtx) throw new Error('audio non sbloccato: tocca un pulsante e riprova');
   try { if (currentSrc) currentSrc.stop(); } catch (e) {}
   speaking = true; status('Preparo la voce...');
