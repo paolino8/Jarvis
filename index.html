@@ -53,7 +53,7 @@
   <small>Voce Gemini</small>
   <select id="gvoice"><option>Charon</option><option>Orus</option><option>Fenrir</option><option>Algenib</option><option>Iapetus</option><option>Enceladus</option><option>Puck</option></select>
   <small>Modello voce Gemini</small>
-  <input id="tts" value="gemini-2.5-flash-preview-tts">
+  <input id="tts" value="gemini-3.1-flash-tts-preview">
   <small>Voce iOS (riserva)</small>
   <select id="voice"></select>
   <small>Tono (grave - acuto)</small>
@@ -119,7 +119,7 @@ $('preset').onclick = () => {
 };
 $('engine').value = store('jarvis_engine') || 'browser';
 $('gvoice').value = store('jarvis_gvoice') || 'Charon';
-$('tts').value = store('jarvis_tts') || 'gemini-2.5-flash-preview-tts';
+{ let tv = store('jarvis_tts'); if (!tv || tv === 'gemini-2.5-flash-preview-tts') tv = 'gemini-3.1-flash-tts-preview'; $('tts').value = tv; }
 ['engine', 'gvoice', 'tts'].forEach(id => $(id).onchange = () => store('jarvis_' + id, $(id).value.trim()));
 
 function browserSpeak(t) {
@@ -152,29 +152,53 @@ function speakDone() {
   speaking = false; lastSpoke = Date.now(); $('orb').classList.remove('busy');
   status(earOn ? 'In ascolto: di\u2019 "Jarvis"' : 'Pronto');
 }
+function findAudio(o) {
+  if (!o || typeof o !== 'object') return null;
+  if (typeof o.data === 'string' && o.data.length > 2000) return { data: o.data, mime: o.mimeType || o.mime_type || '' };
+  for (const k in o) { const r = findAudio(o[k]); if (r) return r; }
+  return null;
+}
+async function ttsRequest(t, key) {
+  const voice = $('gvoice').value, model = $('tts').value.trim();
+  const prompt = 'Leggi in italiano con voce maschile calma, elegante e sicura, come un maggiordomo britannico: ' + t;
+  const base = 'https://generativelanguage.googleapis.com/v1beta/';
+  const gc = m => () => fetch(base + 'models/' + m + ':generateContent?key=' + encodeURIComponent(key), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } } })
+  });
+  const ia = rev => () => fetch(base + 'interactions?key=' + encodeURIComponent(key), {
+    method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, rev ? { 'Api-Revision': '2026-05-20' } : {}),
+    body: JSON.stringify({ model: model, input: prompt, response_format: { type: 'audio' }, generation_config: { speech_config: [{ voice: voice }] } })
+  });
+  const attempts = [['A', gc(model)], ['B', ia(true)], ['C', ia(false)], ['D', gc('gemini-2.5-flash-preview-tts')]];
+  const errs = [];
+  for (const at of attempts) {
+    try {
+      const r = await at[1]();
+      const j = await r.json();
+      if (!r.ok) throw new Error((j.error && j.error.message) || r.status);
+      const au = findAudio(j);
+      if (au) return au;
+      throw new Error('nessun audio ricevuto');
+    } catch (e) { errs.push(at[0] + ': ' + String(e.message).slice(0, 90)); }
+  }
+  throw new Error(errs.join(' | '));
+}
 async function geminiSpeak(t) {
   const key = $('key').value.trim();
   if (!key) throw new Error('manca la chiave');
   if (!audioCtx) throw new Error('audio non sbloccato: tocca un pulsante e riprova');
   try { if (currentSrc) currentSrc.stop(); } catch (e) {}
   speaking = true; status('Preparo la voce...');
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + $('tts').value.trim() + ':generateContent?key=' + encodeURIComponent(key);
-  const r = await fetch(url, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: 'Leggi in italiano con voce maschile calma, elegante e sicura, come un maggiordomo britannico: ' + t }] }],
-      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: $('gvoice').value } } } }
-    })
-  });
-  const j = await r.json();
-  if (!r.ok) throw new Error((j.error && j.error.message) || r.status);
-  const part = j.candidates[0].content.parts.find(p => p.inlineData);
-  if (!part) throw new Error('nessun audio ricevuto');
-  const rate = parseInt((part.inlineData.mimeType.match(/rate=(\d+)/) || [])[1]) || 24000;
-  const bin = atob(part.inlineData.data), n = Math.floor(bin.length / 2);
+  const au = await ttsRequest(t, key);
+  const rate = parseInt((au.mime.match(/rate=(\d+)/) || [])[1]) || 24000;
+  const bin = atob(au.data);
+  const off = bin.slice(0, 4) === 'RIFF' ? 44 : 0;
+  const n = Math.floor((bin.length - off) / 2);
   const buf = audioCtx.createBuffer(1, n, rate), ch = buf.getChannelData(0);
   for (let i = 0; i < n; i++) {
-    let v = (bin.charCodeAt(2 * i + 1) << 8) | bin.charCodeAt(2 * i);
+    let v = (bin.charCodeAt(off + 2 * i + 1) << 8) | bin.charCodeAt(off + 2 * i);
     if (v >= 32768) v -= 65536;
     ch[i] = v / 32768;
   }
