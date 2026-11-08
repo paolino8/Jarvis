@@ -52,6 +52,8 @@
   <select id="automic"><option value="off">Spento</option><option value="on">Acceso</option></select>
   <small>Suono all'apertura</small>
   <select id="startsnd"><option value="singolarita">Singolarità</option><option value="plasma">Plasma</option><option value="off">Spento</option></select>
+  <small>Animazione all'avvio</small>
+  <select id="bootanim"><option value="on">Acceso</option><option value="off">Spento</option></select>
   <small>Grafica</small>
   <select id="gstyle"><option value="circle">Cerchio</option><option value="hud">HUD da casco</option><option value="neural">Rete neurale</option><option value="combo">HUD e rete</option></select>
   <small>Voce</small>
@@ -515,7 +517,12 @@ setTimeout(() => {
   const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const P = [];
   for (let i = 0; i < 70; i++) P.push({ a: Math.random() * 6.283, r: 0.5 + Math.random() * 1.1, s: (Math.random() - 0.5) * 0.012, ph: Math.random() * 20, z: 0.5 + Math.random() });
-  let t = 0, energy = 0.15, hue = 190, ah = 190, tk = 0;
+  let t = 0, energy = 0.15, hue = 190, ah = 190, tk = 0, bt = 0;
+  let bootOn = (store('jarvis_boot') || 'on') !== 'off';
+  $('bootanim').value = bootOn ? 'on' : 'off';
+  $('bootanim').onchange = () => { bootOn = $('bootanim').value === 'on'; store('jarvis_boot', $('bootanim').value); bt = 0; };
+  const clamp01 = u => Math.max(0, Math.min(1, u));
+  const ez = u => 1 - Math.pow(1 - u, 3);
   const TAU = Math.PI * 2;
   let style = store('jarvis_style') || 'circle';
   $('gstyle').value = style;
@@ -659,11 +666,16 @@ setTimeout(() => {
   function drawCombo(s) {
     const t = s.t, energy = s.energy, col = s.col, col2 = s.col2, talk = s.talk, busy = s.busy;
     const cx = W / 2, top = 78, bot = H - 34, cy = (top + bot) / 2 + 2, R = 34;
+    const bt = s.bt, ph = (a, b2) => clamp01((bt - a) / (b2 - a));
+    const scanX = bt >= 4.2 ? W + 10 : W * ez(ph(2.4, 4.0));
+    const clipRest = () => { g.save(); g.beginPath(); g.rect(0, 0, scanX, H); g.clip(); };
+    clipRest();
     g.setLineDash([]); g.lineCap = 'butt'; g.strokeStyle = col(60, 0.8); g.lineWidth = 2;
     const b = 14, m = 3;
     [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]].forEach(c => {
       g.beginPath(); g.moveTo(c[0], c[1] + c[3] * b); g.lineTo(c[0], c[1]); g.lineTo(c[0] + c[2] * b, c[1]); g.stroke();
     });
+    g.restore();
     const xs = [W * 0.07, W * 0.2, W * 0.8, W * 0.93], cnt = [4, 5, 5, 3];
     const ny = (i, n) => top + (bot - top) * (i + 0.5) / n;
     const nodes = [];
@@ -679,20 +691,40 @@ setTimeout(() => {
       if (talk) v = Math.max(v, 0.5 + 0.5 * Math.sin(t * 8 + i * 1.3 + l));
       return Math.min(1, 0.12 + v * (0.5 + energy * 0.5));
     };
-    const line = (x1, y1, x2, y2, m2) => {
-      g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2);
+    const line = (x1, y1, x2, y2, m2, gr) => {
+      if (gr === undefined) gr = 1;
+      if (gr <= 0) return;
+      g.beginPath(); g.moveTo(x1, y1); g.lineTo(x1 + (x2 - x1) * gr, y1 + (y2 - y1) * gr);
       g.strokeStyle = m2 > 0.45 ? col2(65, 0.2 + m2 * 0.7) : col(60, 0.08 + m2 * 0.4);
       g.lineWidth = 0.6 + m2 * 1.8; g.stroke();
     };
     g.lineCap = 'round';
-    for (let a = 0; a < 4; a++) for (let c = 0; c < 5; c++) line(nodes[0][a][0], nodes[0][a][1], nodes[1][c][0], nodes[1][c][1], (brX(nodes[0][a][0], a, 0) + brX(nodes[1][c][0], c, 1)) / 2);
-    for (let c = 0; c < 5; c++) line(nodes[1][c][0], nodes[1][c][1], lp[0], lp[1], (brX(nodes[1][c][0], c, 1) + brX(lp[0], 0, 1)) / 2);
-    for (let c = 0; c < 5; c++) line(rp[0], rp[1], nodes[2][c][0], nodes[2][c][1], (brX(rp[0], 0, 2) + brX(nodes[2][c][0], c, 2)) / 2);
-    for (let a = 0; a < 5; a++) for (let c = 0; c < 3; c++) line(nodes[2][a][0], nodes[2][a][1], nodes[3][c][0], nodes[3][c][1], (brX(nodes[2][a][0], a, 2) + brX(nodes[3][c][0], c, 3)) / 2);
+    for (let a = 0; a < 4; a++) for (let c = 0; c < 5; c++) line(nodes[0][a][0], nodes[0][a][1], nodes[1][c][0], nodes[1][c][1], (brX(nodes[0][a][0], a, 0) + brX(nodes[1][c][0], c, 1)) / 2, ez(ph(0.4, 1.0)));
+    for (let c = 0; c < 5; c++) line(nodes[1][c][0], nodes[1][c][1], lp[0], lp[1], (brX(nodes[1][c][0], c, 1) + brX(lp[0], 0, 1)) / 2, ez(ph(1.5, 2.1)));
+    for (let c = 0; c < 5; c++) line(rp[0], rp[1], nodes[2][c][0], nodes[2][c][1], (brX(rp[0], 0, 2) + brX(nodes[2][c][0], c, 2)) / 2, ez(ph(1.6, 2.2)));
+    for (let a = 0; a < 5; a++) for (let c = 0; c < 3; c++) line(nodes[2][a][0], nodes[2][a][1], nodes[3][c][0], nodes[3][c][1], (brX(nodes[2][a][0], a, 2) + brX(nodes[3][c][0], c, 3)) / 2, ez(ph(0.8, 1.4)));
 
-    drawOrb(cx + Math.sin(t * 0.7) * 4, cy + Math.cos(t * 0.5) * 3, R, s);
+    const p2 = ph(1.6, 2.6), ox = cx + Math.sin(t * 0.7) * 4, oy = cy + Math.cos(t * 0.5) * 3;
+    if (p2 > 0) {
+      g.save();
+      const k = ez(p2);
+      g.translate(ox, oy); g.scale(k, k); g.translate(-ox, -oy);
+      g.globalAlpha = Math.min(1, p2 * 2);
+      drawOrb(ox, oy, R, s);
+      g.restore();
+      if (p2 < 1) {
+        g.beginPath(); g.arc(ox, oy, R * (0.6 + p2 * 4), 0, TAU);
+        g.strokeStyle = col2(75, (1 - p2) * 0.8); g.lineWidth = 2 + (1 - p2) * 3; g.stroke();
+        const fl = g.createRadialGradient(ox, oy, 0, ox, oy, R * 2.2);
+        fl.addColorStop(0, 'rgba(255,255,255,' + (Math.pow(1 - p2, 2) * 0.7).toFixed(3) + ')'); fl.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = fl; g.beginPath(); g.arc(ox, oy, R * 2.2, 0, TAU); g.fill();
+      }
+    }
 
     for (let l = 0; l < 4; l++) for (let i = 0; i < cnt[l]; i++) {
+      const na = ez(ph(l * 0.35, l * 0.35 + 0.5));
+      if (na <= 0) continue;
+      g.save(); g.globalAlpha = na;
       const x = nodes[l][i][0], y = nodes[l][i][1], v = brX(x, i, l);
       if (v > 0.45) {
         g.beginPath(); g.arc(x, y, 7 + v * 6, 0, TAU); g.strokeStyle = col2(65, v * 0.5); g.lineWidth = 1; g.stroke();
@@ -701,7 +733,9 @@ setTimeout(() => {
         g.beginPath(); g.arc(x, y, 4.5, 0, TAU); g.fillStyle = 'rgba(4,26,36,0.9)'; g.fill();
         g.strokeStyle = col(60, 0.8); g.lineWidth = 1.1; g.stroke();
       }
+      g.restore();
     }
+    clipRest();
 
     const w = hudW;
     const bv = bat.pct === null ? 'n/d' : bat.pct + '%';
@@ -715,8 +749,9 @@ setTimeout(() => {
     panels.forEach(p => {
       g.strokeStyle = p[5] || col(60, 0.7); g.strokeRect(p[0] + 0.5, p[1] + 0.5, 92, 56);
       g.fillStyle = p[5] || col(65, 0.8); g.font = '11px ui-monospace, Menlo, monospace'; g.fillText(p[2], p[0] + 8, p[1] + 16);
-      g.fillStyle = p[5] || col2(65, 1); g.font = '17px ui-monospace, Menlo, monospace'; g.fillText(p[3], p[0] + 8, p[1] + 36);
-      g.fillStyle = p[5] || col(65, 0.7); g.font = '11px ui-monospace, Menlo, monospace'; g.fillText(p[4], p[0] + 8, p[1] + 50);
+      const tn = ez(ph(3.0, 3.9));
+      g.fillStyle = p[5] || col2(65, 1); g.font = '17px ui-monospace, Menlo, monospace'; g.fillText(String(p[3]).slice(0, Math.ceil(String(p[3]).length * tn)), p[0] + 8, p[1] + 36);
+      g.fillStyle = p[5] || col(65, 0.7); g.font = '11px ui-monospace, Menlo, monospace'; g.fillText(String(p[4]).slice(0, Math.ceil(String(p[4]).length * tn)), p[0] + 8, p[1] + 50);
     });
     const d = new Date();
     const hh = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
@@ -733,6 +768,14 @@ setTimeout(() => {
       if (i === 0) g.moveTo(x, yy + amp); else g.lineTo(x, yy + amp);
     }
     g.strokeStyle = col2(65, 0.9); g.lineWidth = 1.5; g.stroke();
+    g.restore();
+    if (bt > 2.4 && bt < 4.2) {
+      const fa = 1 - ph(3.6, 4.2);
+      const sg = g.createLinearGradient(scanX - 50, 0, scanX, 0);
+      sg.addColorStop(0, col2(70, 0)); sg.addColorStop(1, col2(70, 0.3 * fa));
+      g.fillStyle = sg; g.fillRect(scanX - 50, 0, 50, H);
+      g.fillStyle = col2(80, 0.9 * fa); g.fillRect(scanX - 1, 0, 2, H);
+    }
   }
 
   function drawOrb(x, y, R, s) {
@@ -804,6 +847,7 @@ setTimeout(() => {
     requestAnimationFrame(frame);
     if (document.hidden || !W) return;
     t += reduce ? 0.004 : 0.016;
+    bt = bootOn && !reduce ? bt + 0.016 : 99;
     const busy = cv.classList.contains('busy'), listen = cv.classList.contains('listen');
     const talk = typeof speaking !== 'undefined' && speaking;
     const target = talk ? 1 : busy ? 0.7 : listen ? 0.4 : 0.15;
@@ -819,10 +863,23 @@ setTimeout(() => {
     const y = H / 2 + Math.cos(t * 0.5) * H * 0.07 + Math.sin(t * 1.3) * H * 0.03;
     g.clearRect(0, 0, W, H);
     if (style !== 'circle') {
-      (style === 'hud' ? drawHud : style === 'combo' ? drawCombo : drawNeural)({ t: t, energy: energy, talk: talk, busy: busy, listen: listen, col: col, col2: col2 });
+      const sc = { t: t, energy: energy, talk: talk, busy: busy, listen: listen, col: col, col2: col2, bt: bt };
+      if (style === 'combo' || bt >= 2.2) { (style === 'hud' ? drawHud : style === 'combo' ? drawCombo : drawNeural)(sc); return; }
+      const bp = ez(clamp01(bt / 2)), bx = W * bp;
+      g.save(); g.beginPath(); g.rect(0, 0, bx, H); g.clip();
+      (style === 'hud' ? drawHud : drawNeural)(sc);
+      g.restore();
+      g.fillStyle = col2(80, 0.9 * (1 - clamp01((bt - 1.6) / 0.6))); g.fillRect(bx - 1, 0, 2, H);
       return;
     }
 
+    if (bt < 1.6) {
+      const bp = ez(bt / 1.6);
+      g.save(); g.translate(x, y); g.scale(bp, bp); g.translate(-x, -y); g.globalAlpha = Math.min(1, bp * 2);
+      drawOrb(x, y, R, { t: t, energy: energy, talk: talk, busy: busy, listen: listen, col: col, col2: col2 });
+      g.restore();
+      return;
+    }
     drawOrb(x, y, R, { t: t, energy: energy, talk: talk, busy: busy, listen: listen, col: col, col2: col2 });
   }
   frame();
