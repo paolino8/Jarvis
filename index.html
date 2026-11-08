@@ -46,6 +46,8 @@
   <input id="model" value="gemini-2.5-flash-lite">
   <small>Nome del comando batteria (app Comandi rapidi)</small>
   <input id="shname" value="Jarvis batteria">
+  <small>Microfono</small>
+  <select id="micmode"><option value="auto">Automatico (iOS)</option><option value="gemini">Gemini (registra e trascrive)</option></select>
   <small>Grafica</small>
   <select id="gstyle"><option value="circle">Cerchio</option><option value="hud">HUD da casco</option><option value="neural">Rete neurale</option><option value="combo">HUD e rete</option></select>
   <small>Motore voce</small>
@@ -377,16 +379,85 @@ $('txt').addEventListener('keydown', e => { if (e.key === 'Enter') $('send').onc
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 // Microfono singolo (tocca e parla)
-let rec = null;
+let rec = null, gRec = null;
+function encodeWav(chunks, inRate) {
+  let len = 0; chunks.forEach(c => len += c.length);
+  const all = new Float32Array(len); let o = 0; chunks.forEach(c => { all.set(c, o); o += c.length; });
+  const outRate = 16000, ratio = inRate / outRate, n = Math.floor(len / ratio);
+  const buf = new ArrayBuffer(44 + n * 2), dv = new DataView(buf);
+  const w = (off, t) => { for (let i = 0; i < t.length; i++) dv.setUint8(off + i, t.charCodeAt(i)); };
+  w(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, outRate, true); dv.setUint32(28, outRate * 2, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); w(36, 'data'); dv.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const s0 = Math.floor(i * ratio), s1 = Math.min(len, Math.floor((i + 1) * ratio));
+    let sum = 0; for (let k = s0; k < s1; k++) sum += all[k];
+    let v = sum / Math.max(1, s1 - s0); v = Math.max(-1, Math.min(1, v));
+    dv.setInt16(44 + i * 2, v < 0 ? v * 32768 : v * 32767, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+async function transcribe(blob) {
+  const key = $('key').value.trim();
+  if (!key) throw new Error('manca la chiave');
+  const b64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(blob); });
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + $('model').value.trim() + ':generateContent?key=' + encodeURIComponent(key);
+  const r = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents: [{ parts: [
+      { text: 'Trascrivi in italiano questo audio. Rispondi solo con il testo trascritto, senza commenti. Se non senti parole, rispondi con una riga vuota.' },
+      { inlineData: { mimeType: 'audio/wav', data: b64 } }
+    ] }] })
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error((j.error && j.error.message) || r.status);
+  return j.candidates[0].content.parts.map(p => p.text || '').join('').trim();
+}
+async function gemMicToggle() {
+  if (gRec) { gRec.stop(); return; }
+  try {
+    if (!audioCtx) unlockAudio();
+    const ctx = audioCtx;
+    if (ctx.state === 'suspended') await ctx.resume();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const src = ctx.createMediaStreamSource(stream);
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    const mute = ctx.createGain(); mute.gain.value = 0;
+    const chunks = []; let tm = null;
+    proc.onaudioprocess = e => { chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+    src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+    gRec = { stop: async () => {
+      clearTimeout(tm); gRec = null;
+      try { proc.disconnect(); src.disconnect(); } catch (e) {}
+      stream.getTracks().forEach(t => t.stop());
+      $('mic').classList.remove('on');
+      const blob = encodeWav(chunks, ctx.sampleRate);
+      if (blob.size < 6000) { status('Non ho sentito nulla'); return; }
+      status('Trascrivo...');
+      try {
+        const txt = await transcribe(blob);
+        if (txt) ask(txt); else status('Non ho capito, riprova');
+      } catch (e) { add('ai', 'Errore microfono: ' + e.message); status('Errore'); }
+    } };
+    tm = setTimeout(() => { if (gRec) gRec.stop(); }, 15000);
+    $('mic').classList.add('on'); status('Parla, poi tocca di nuovo il microfono');
+  } catch (e) { gRec = null; $('mic').classList.remove('on'); status('Microfono: ' + (e.name || e.message)); }
+}
+$('micmode').value = store('jarvis_micmode') || 'auto';
+$('micmode').onchange = () => { store('jarvis_micmode', $('micmode').value); if ($('micmode').value === 'auto') store('jarvis_gemmic', '0'); };
 $('mic').onclick = () => {
   speak(' ');
-  if (!SR) { status('Riconoscimento vocale non supportato: scrivi'); return; }
   if (earOn) stopEar();
+  if (gRec) { gRec.stop(); return; }
+  if (!SR || $('micmode').value === 'gemini' || store('jarvis_gemmic') === '1') { gemMicToggle(); return; }
   if (rec) { rec.stop(); return; }
   rec = new SR(); rec.lang = 'it-IT'; rec.interimResults = false;
   rec.onstart = () => { $('mic').classList.add('on'); status('Ti ascolto...'); };
   rec.onresult = e => ask(e.results[0][0].transcript);
-  rec.onerror = e => status('Microfono: ' + e.error);
+  rec.onerror = e => {
+    if (e.error === 'service-not-allowed' || e.error === 'not-allowed') { store('jarvis_gemmic', '1'); status('Cambio sistema: tocca di nuovo il microfono'); }
+    else status('Microfono: ' + e.error);
+  };
   rec.onend = () => { $('mic').classList.remove('on'); rec = null; };
   rec.start();
 };
