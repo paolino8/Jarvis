@@ -470,25 +470,29 @@ function startupSound() {
     if (!c || c.state !== 'running') return false;
     const k = $('startsnd').value;
     if (k === 'plasma') {
-      snWob(c, 110, 0, 1.4, 0.3, 14, 25);
-      snWob(c, 220, 0, 1.4, 0.2, 18, 40);
-      snTone(c, 'sawtooth', 200, 1600, 0.2, 1.0, 0.07, 0.5);
-      snTone(c, 'sine', 2400, 2400, 1.0, 0.5, 0.1);
+      snWob(c, 110, 0, 0.8, 0.3, 14, 25);
+      snWob(c, 220, 0, 0.8, 0.2, 18, 40);
+      snTone(c, 'sawtooth', 200, 1600, 0, 0.55, 0.07, 0.15);
+      snTone(c, 'sine', 2400, 2400, 0.45, 0.35, 0.1, 0.01);
     } else {
-      snTone(c, 'sine', 40, 160, 0, 1.1, 0.5, 0.3);
-      snTone(c, 'triangle', 80, 640, 0.1, 1.0, 0.15, 0.4);
-      snTone(c, 'sine', 2000, 5000, 1.0, 0.35, 0.12, 0.01);
-      snTone(c, 'sine', 3000, 3000, 1.1, 0.8, 0.08, 0.01);
+      snTone(c, 'sine', 40, 160, 0, 0.6, 0.5, 0.08);
+      snTone(c, 'triangle', 80, 640, 0, 0.55, 0.15, 0.1);
+      snTone(c, 'sine', 2000, 5000, 0.5, 0.25, 0.12, 0.01);
+      snTone(c, 'sine', 3000, 3000, 0.55, 0.5, 0.08, 0.01);
     }
     return true;
   } catch (e) { return false; }
 }
 function trySound() {
   if (soundDone || $('startsnd').value === 'off') return;
-  if (startupSound()) soundDone = true;
+  if (startupSound()) { soundDone = true; return; }
+  try {
+    if (!audioCtx) unlockAudio();
+    audioCtx.resume().then(() => { if (!soundDone && startupSound()) soundDone = true; }).catch(() => {});
+  } catch (e) {}
 }
-setTimeout(trySound, 400);
-['touchstart', 'click'].forEach(ev => document.addEventListener(ev, () => { setTimeout(trySound, 150); setTimeout(trySound, 600); }));
+trySound();
+['touchstart', 'click'].forEach(ev => document.addEventListener(ev, () => { unlockAudio(); trySound(); }, { passive: true }));
 $('automic').value = store('jarvis_automic') || 'off';
 $('automic').onchange = () => store('jarvis_automic', $('automic').value);
 setTimeout(() => {
